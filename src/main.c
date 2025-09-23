@@ -8,6 +8,7 @@
 // - Delete by ID and delete all entries for a given month (YYYY-MM)
 // Data is stored in CSV at db/data.csv (project root) with a header row.
 #include "data_model.h" // located in src/data_model.h
+#include "menu.h"
 
 #include <errno.h>
 #include <stdlib.h>
@@ -336,6 +337,7 @@ static void print_usage(const char *prog) {
   printf("  %s filter [--month YYYY-MM] [--category NAME] [--type Income|Expense]\n\n", prog);
   printf("  %s edit <ID> [--date YYYY-MM-DD] [--type Income|Expense] [--category NAME] [--amount NUM] [--description TEXT...]\n", prog);
   printf("  %s totals [--by month|category] [--month YYYY-MM] [--category NAME] [--type Income|Expense]\n\n", prog);
+  printf("  %s menu  # interactive menu for current month\n\n", prog);
 }
 
 // Program entry point: route subcommands and enforce help/usage behavior.
@@ -516,6 +518,8 @@ int main(int argc, char *argv[]) {
       printf("%s,%.2f,%.2f,%.2f\n", aggs[i].key, aggs[i].income, aggs[i].expense, balance);
     }
     return 0;
+  } else if (strcmp(argv[1], "menu") == 0) {
+    return run_menu(argv[0], g_db_file);
   } else {
     fprintf(stderr, "Unknown command: %s\n", argv[1]);
     return 1;

@@ -13,6 +13,7 @@ It records income and expenses to a CSV file and provides basic querying and mai
 - Filter by month, category, and type
 - Edit a transaction by ID
 - Aggregate totals by month or category
+ - Simple interactive menu for current month
 
 ## Requirements
 
@@ -78,6 +79,11 @@ Commands:
 - Aggregate totals
   ```bash
   ./finance totals [--by month|category] [--month YYYY-MM] [--category NAME] [--type Income|Expense]
+  ```
+
+- Interactive menu (current month shortcuts)
+  ```bash
+  ./finance menu
   ```
 
 ## Notes
