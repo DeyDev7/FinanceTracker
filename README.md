@@ -10,7 +10,9 @@ It records income and expenses to a CSV file and provides basic querying and mai
 - Compute totals and balance
 - Delete a transaction by ID
 - Delete all transactions for a given month (YYYY-MM)
- - Filter by month, category, and type
+- Filter by month, category, and type
+- Edit a transaction by ID
+- Aggregate totals by month or category
 
 ## Requirements
 
@@ -66,6 +68,16 @@ Commands:
 - Filter transactions
   ```bash
   ./finance filter [--month YYYY-MM] [--category NAME] [--type Income|Expense]
+  ```
+
+- Edit a transaction by ID
+  ```bash
+  ./finance edit <ID> [--date YYYY-MM-DD] [--type Income|Expense] [--category NAME] [--amount NUM] [--description TEXT...]
+  ```
+
+- Aggregate totals
+  ```bash
+  ./finance totals [--by month|category] [--month YYYY-MM] [--category NAME] [--type Income|Expense]
   ```
 
 ## Notes

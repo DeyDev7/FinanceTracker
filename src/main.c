@@ -239,12 +239,12 @@ static int handle_add(int argc, char *argv[]) {
     fprintf(stderr, "Error: date must be in format YYYY-MM-DD.\n");
     return 1;
   }
-  strncpy(tx.date, argv[2], sizeof(tx.date) - 1);
+  snprintf(tx.date, sizeof(tx.date), "%s", argv[2]);
   if (normalize_type(argv[3], tx.type) != 0) {
     fprintf(stderr, "Error: type must be Income or Expense (case-insensitive).\n");
     return 1;
   }
-  strncpy(tx.category, argv[4], sizeof(tx.category) - 1);
+  snprintf(tx.category, sizeof(tx.category), "%s", argv[4]);
   tx.amount = atof(argv[5]);
   if (tx.amount < 0.0) {
     fprintf(stderr, "Error: amount must be non-negative.\n");
@@ -334,6 +334,8 @@ static void print_usage(const char *prog) {
   printf("  %s delete <ID>\n", prog);
   printf("  %s delete-month YYYY-MM\n", prog);
   printf("  %s filter [--month YYYY-MM] [--category NAME] [--type Income|Expense]\n\n", prog);
+  printf("  %s edit <ID> [--date YYYY-MM-DD] [--type Income|Expense] [--category NAME] [--amount NUM] [--description TEXT...]\n", prog);
+  printf("  %s totals [--by month|category] [--month YYYY-MM] [--category NAME] [--type Income|Expense]\n\n", prog);
 }
 
 // Program entry point: route subcommands and enforce help/usage behavior.
@@ -398,6 +400,121 @@ int main(int argc, char *argv[]) {
       fputs(line, stdout);
     }
     fclose(fp);
+    return 0;
+  } else if (strcmp(argv[1], "edit") == 0) {
+    if (argc < 3) { fprintf(stderr, "Usage: %s edit <ID> [--date YYYY-MM-DD] [--type Income|Expense] [--category NAME] [--amount NUM] [--description TEXT...]\n", argv[0]); return 1; }
+    int id = atoi(argv[2]);
+    if (id <= 0) { fprintf(stderr, "Error: ID must be a positive integer.\n"); return 1; }
+    // Parse options
+    const char *opt_date = NULL; char opt_type[8] = {0};
+    const char *opt_category = NULL; double opt_amount = -1.0; char opt_desc[256] = {0};
+    int have_desc = 0;
+    for (int i = 3; i < argc; ++i) {
+      if (strcmp(argv[i], "--date") == 0 && i + 1 < argc) {
+        opt_date = argv[++i];
+      } else if (strcmp(argv[i], "--type") == 0 && i + 1 < argc) {
+        if (normalize_type(argv[i+1], opt_type) != 0) { fprintf(stderr, "Error: --type must be Income or Expense.\n"); return 1; }
+        i++;
+      } else if (strcmp(argv[i], "--category") == 0 && i + 1 < argc) {
+        opt_category = argv[++i];
+      } else if (strcmp(argv[i], "--amount") == 0 && i + 1 < argc) {
+        opt_amount = atof(argv[++i]);
+      } else if (strcmp(argv[i], "--description") == 0 && i + 1 < argc) {
+        // join remaining as description
+        opt_desc[0] = '\0';
+        size_t descLen = 0;
+        for (int j = i + 1; j < argc; ++j) {
+          size_t left = sizeof(opt_desc) - 1 - descLen; if (left == 0) break;
+          strncat(opt_desc, argv[j], left);
+          descLen = strlen(opt_desc);
+          if (j + 1 < argc && descLen + 1 < sizeof(opt_desc)) { opt_desc[descLen] = ' '; opt_desc[descLen+1] = '\0'; descLen++; }
+        }
+        have_desc = 1;
+        break;
+      } else {
+        fprintf(stderr, "Usage: %s edit <ID> [--date YYYY-MM-DD] [--type Income|Expense] [--category NAME] [--amount NUM] [--description TEXT...]\n", argv[0]);
+        return 1;
+      }
+    }
+    if (opt_date && !is_valid_date(opt_date)) { fprintf(stderr, "Error: --date must be YYYY-MM-DD.\n"); return 1; }
+    if (opt_amount < 0.0 && opt_amount != -1.0) { fprintf(stderr, "Error: --amount must be non-negative.\n"); return 1; }
+    if (ensure_csv_has_header() != 0) return 1;
+    // Rewrite file with edited row
+    char tmp_file[160]; snprintf(tmp_file, sizeof(tmp_file), "%s/%s", g_db_dir, "data.tmp.csv");
+    FILE *in = fopen(g_db_file, "r"); if (!in) { fprintf(stderr, "Error: cannot open %s\n", g_db_file); return 1; }
+    FILE *out = fopen(tmp_file, "w"); if (!out) { fclose(in); fprintf(stderr, "Error: cannot open temp file\n"); return 1; }
+    char line[512]; if (fgets(line, sizeof(line), in)) fputs(line, out); // header
+    int cur = 1; int edited = 0;
+    while (fgets(line, sizeof(line), in)) {
+      if (cur == id) {
+        char date[32], type[16], category[64], description[256]; double amount = 0.0; description[0] = '\0';
+        int parsed = sscanf(line, "%31[^,],%15[^,],%63[^,],%lf,%255[^\n]", date, type, category, &amount, description);
+        if (parsed >= 4) {
+          if (opt_date) snprintf(date, sizeof(date), "%s", opt_date);
+          if (opt_type[0]) snprintf(type, sizeof(type), "%s", opt_type);
+          if (opt_category) snprintf(category, sizeof(category), "%s", opt_category);
+          if (opt_amount >= 0.0) amount = opt_amount;
+          if (have_desc) { snprintf(description, sizeof(description), "%s", opt_desc); }
+        }
+        fprintf(out, "%s,%s,%s,%.2f,%s\n", date, type, category, amount, description);
+        edited = 1;
+      } else {
+        fputs(line, out);
+      }
+      cur++;
+    }
+    fclose(in); fclose(out);
+    if (!edited) { remove(tmp_file); fprintf(stderr, "Error: ID %d not found.\n", id); return 1; }
+    if (rename(tmp_file, g_db_file) != 0) { fprintf(stderr, "Error: failed to update database.\n"); return 1; }
+    printf("Edited row ID %d.\n", id);
+    return 0;
+  } else if (strcmp(argv[1], "totals") == 0) {
+    const char *groupBy = "month"; // default grouping
+    const char *opt_month = NULL; const char *opt_category = NULL; char opt_type[8] = {0};
+    for (int i = 2; i < argc; ++i) {
+      if (strcmp(argv[i], "--by") == 0 && i + 1 < argc) { groupBy = argv[++i]; }
+      else if (strcmp(argv[i], "--month") == 0 && i + 1 < argc) { opt_month = argv[++i]; }
+      else if (strcmp(argv[i], "--category") == 0 && i + 1 < argc) { opt_category = argv[++i]; }
+      else if (strcmp(argv[i], "--type") == 0 && i + 1 < argc) {
+        if (normalize_type(argv[i+1], opt_type) != 0) { fprintf(stderr, "Error: --type must be Income or Expense.\n"); return 1; }
+        i++;
+      } else {
+        fprintf(stderr, "Usage: %s totals [--by month|category] [--month YYYY-MM] [--category NAME] [--type Income|Expense]\n", argv[0]);
+        return 1;
+      }
+    }
+    if (opt_month && !is_valid_year_month(opt_month)) { fprintf(stderr, "Error: --month must be YYYY-MM.\n"); return 1; }
+    int groupByMonth = (strcmp(groupBy, "month") == 0);
+    int groupByCategory = (strcmp(groupBy, "category") == 0);
+    if (!groupByMonth && !groupByCategory) { fprintf(stderr, "Error: --by must be 'month' or 'category'.\n"); return 1; }
+    if (ensure_csv_has_header() != 0) return 1;
+    typedef struct { char key[64]; double income; double expense; } Aggregate;
+    Aggregate aggs[512]; int aggCount = 0;
+    FILE *fp = fopen(g_db_file, "r"); if (!fp) { fprintf(stderr, "Error: cannot open %s\n", g_db_file); return 1; }
+    char line[512]; if (fgets(line, sizeof(line), fp)) {/* skip header */}
+    while (fgets(line, sizeof(line), fp)) {
+      char date[32], type[16], category[64], description[256]; double amount = 0.0; description[0] = '\0';
+      int parsed = sscanf(line, "%31[^,],%15[^,],%63[^,],%lf,%255[^\n]", date, type, category, &amount, description);
+      if (parsed < 4) continue;
+      if (opt_month && strncmp(date, opt_month, 7) != 0) continue;
+      if (opt_category && strcasecmp(category, opt_category) != 0) continue;
+      if (opt_type[0] != '\0' && strcasecmp(type, opt_type) != 0) continue;
+      char key[64]; key[0] = '\0';
+      if (groupByMonth) { memcpy(key, date, 7); key[7] = '\0'; }
+      else if (groupByCategory) { snprintf(key, sizeof(key), "%s", category); }
+      int idx = -1;
+      for (int i = 0; i < aggCount; ++i) { if (strcasecmp(aggs[i].key, key) == 0) { idx = i; break; } }
+      if (idx == -1 && aggCount < 512) { idx = aggCount++; snprintf(aggs[idx].key, sizeof(aggs[idx].key), "%s", key); aggs[idx].income = aggs[idx].expense = 0.0; }
+      if (idx != -1) {
+        if (strncmp(type, "Income", 6) == 0) aggs[idx].income += amount; else aggs[idx].expense += amount;
+      }
+    }
+    fclose(fp);
+    printf("Key,Income,Expense,Balance\n");
+    for (int i = 0; i < aggCount; ++i) {
+      double balance = aggs[i].income - aggs[i].expense;
+      printf("%s,%.2f,%.2f,%.2f\n", aggs[i].key, aggs[i].income, aggs[i].expense, balance);
+    }
     return 0;
   } else {
     fprintf(stderr, "Unknown command: %s\n", argv[1]);
