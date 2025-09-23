@@ -32,6 +32,7 @@ gcc -Wall -Wextra -O2 src/main.c -o finance
 
 - CSV file at `db/data.csv` in the project root. If you run the program from inside `src/`, it still writes to `../db/data.csv`.
 - The CSV has a header: `Date,Type,Category,Amount,Description`.
+- Descriptions are CSV-escaped, so commas and quotes are supported.
 
 ## Usage
 

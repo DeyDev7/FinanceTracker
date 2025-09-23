@@ -19,6 +19,78 @@
 #include <ctype.h>
 
 static const char *CSV_HEADER = "Date,Type,Category,Amount,Description\n";
+// Escape a CSV field per RFC4180-lite: wrap in quotes and double any quotes
+static void csv_escape(const char *in, char *out, size_t outSize) {
+  if (outSize == 0) return;
+  size_t pos = 0;
+  // Always quote for simplicity
+  if (pos < outSize) out[pos++] = '"';
+  for (size_t i = 0; in && in[i] != '\0'; ++i) {
+    if (pos + 2 >= outSize) break; // ensure space for possible quote and closing quote
+    char c = in[i];
+    if (c == '"') {
+      if (pos + 2 >= outSize) break;
+      out[pos++] = '"';
+      out[pos++] = '"';
+    } else {
+      out[pos++] = c;
+    }
+  }
+  if (pos < outSize) out[pos++] = '"';
+  if (pos <= outSize) out[pos] = '\0';
+  else out[outSize - 1] = '\0';
+}
+
+// Parse a CSV line with 5 columns: date,type,category,amount,description
+// Handles quoted fields with doubled quotes. Returns 0 on success.
+static int csv_parse_5(const char *line,
+                       char date[32], char type[16], char category[64],
+                       double *amountOut, char description[256]) {
+  const char *p = line;
+  char *outs[5];
+  size_t outSizes[5];
+  char amountBuf[64];
+  outs[0] = date; outSizes[0] = 32;
+  outs[1] = type; outSizes[1] = 16;
+  outs[2] = category; outSizes[2] = 64;
+  outs[3] = amountBuf; outSizes[3] = sizeof(amountBuf);
+  outs[4] = description; outSizes[4] = 256;
+  for (int col = 0; col < 5; ++col) {
+    size_t pos = 0; int quoted = 0; int done = 0;
+    if (*p == '"') { quoted = 1; p++; }
+    while (!done && *p) {
+      char c = *p++;
+      if (quoted) {
+        if (c == '"') {
+          if (*p == '"') { // escaped quote
+            if (pos + 1 < outSizes[col]) outs[col][pos++] = '"';
+            p++;
+          } else {
+            // end quote
+            if (*p == ',') { p++; }
+            done = 1;
+          }
+        } else {
+          if (pos + 1 < outSizes[col]) outs[col][pos++] = c;
+        }
+      } else {
+        if (c == ',') { done = 1; }
+        else if (c == '\n' || c == '\r') { done = 1; }
+        else { if (pos + 1 < outSizes[col]) outs[col][pos++] = c; }
+      }
+    }
+    outs[col][pos] = '\0';
+    if (!*p) {
+      // reached end of line
+      for (int k = col + 1; k < 5; ++k) outs[k][0] = '\0';
+      break;
+    }
+  }
+  if (!amountOut) return -1;
+  *amountOut = atof(amountBuf);
+  return 0;
+}
+
 // Validate YYYY-MM string (basic range checks only)
 static int is_valid_year_month(const char *ym) {
   if (!ym || strlen(ym) != 7 || ym[4] != '-') return 0;
@@ -134,7 +206,8 @@ static int write_transaction(const Transaction *tx) {
     fprintf(stderr, "Error: cannot open %s for appending\n", g_db_file);
     return -1;
   }
-  fprintf(fp, "%s,%s,%s,%.2f,%s\n", tx->date, tx->type, tx->category, tx->amount, tx->description);
+  char escDesc[512]; csv_escape(tx->description, escDesc, sizeof(escDesc));
+  fprintf(fp, "%s,%s,%s,%.2f,%s\n", tx->date, tx->type, tx->category, tx->amount, escDesc);
   fclose(fp);
   return 0;
 }
@@ -177,9 +250,8 @@ static int compute_balance(void) {
     // CSV columns: 0=date,1=type,2=category,3=amount,4=description
     char date[32], type[16], category[64], description[256];
     double amount = 0.0;
-    // simple parsing assuming no commas inside fields
-    int parsed = sscanf(line, "%31[^,],%15[^,],%63[^,],%lf,%255[^\n]", date, type, category, &amount, description);
-    if (parsed >= 4) {
+    csv_parse_5(line, date, type, category, &amount, description);
+    if (type[0] != '\0') {
       if (strncmp(type, "Income", 6) == 0) income += amount;
       else expense += amount;
     }
@@ -312,10 +384,10 @@ static int delete_month(const char *ym) {
   if (fgets(line, sizeof(line), in)) fputs(line, out); // header
   int removed = 0;
   while (fgets(line, sizeof(line), in)) {
-    char date[16];
-    // get first column (date)
-    int parsed = sscanf(line, "%15[^,]", date);
-    if (parsed == 1 && strncmp(date, ym, 7) == 0) { removed = 1; /* skip */ }
+    char date[32], type[16], category[64], description[256];
+    double amount = 0.0;
+    csv_parse_5(line, date, type, category, &amount, description);
+    if (strncmp(date, ym, 7) == 0) { removed = 1; /* skip */ }
     else { fputs(line, out); }
   }
   fclose(in);
@@ -389,13 +461,12 @@ int main(int argc, char *argv[]) {
     FILE *fp = fopen(g_db_file, "r");
     if (!fp) { fprintf(stderr, "Error: cannot open %s\n", g_db_file); return 1; }
     char line[512];
-    // print header
-    if (fgets(line, sizeof(line), fp)) fputs(line, stdout);
+  // print header
+  if (fgets(line, sizeof(line), fp)) fputs(line, stdout);
     while (fgets(line, sizeof(line), fp)) {
       char date[32], type[16], category[64], description[256];
       double amount = 0.0;
-      int parsed = sscanf(line, "%31[^,],%15[^,],%63[^,],%lf,%255[^\n]", date, type, category, &amount, description);
-      if (parsed < 4) continue;
+      csv_parse_5(line, date, type, category, &amount, description);
       if (opt_month && strncmp(date, opt_month, 7) != 0) continue;
       if (opt_category && strcasecmp(category, opt_category) != 0) continue;
       if (opt_type[0] != '\0' && strcasecmp(type, opt_type) != 0) continue;
@@ -496,8 +567,7 @@ int main(int argc, char *argv[]) {
     char line[512]; if (fgets(line, sizeof(line), fp)) {/* skip header */}
     while (fgets(line, sizeof(line), fp)) {
       char date[32], type[16], category[64], description[256]; double amount = 0.0; description[0] = '\0';
-      int parsed = sscanf(line, "%31[^,],%15[^,],%63[^,],%lf,%255[^\n]", date, type, category, &amount, description);
-      if (parsed < 4) continue;
+      if (csv_parse_5(line, date, type, category, &amount, description) != 0) continue;
       if (opt_month && strncmp(date, opt_month, 7) != 0) continue;
       if (opt_category && strcasecmp(category, opt_category) != 0) continue;
       if (opt_type[0] != '\0' && strcasecmp(type, opt_type) != 0) continue;
