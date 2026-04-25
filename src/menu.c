@@ -97,9 +97,15 @@ int run_menu(const char *prog_name, const char *db_file) {
       if (prompt_string("Category: ", category, sizeof(category)) != 0) { printf("Cancelled.\n"); continue; }
       if (prompt_double("Amount: ", &amount) != 0) { printf("Invalid amount.\n"); continue; }
       if (prompt_string("Description: ", desc, sizeof(desc)) != 0) { printf("Cancelled.\n"); continue; }
-      char escCategory[256]; shell_escape(category, escCategory, sizeof(escCategory));
-      char escDesc[1024]; shell_escape(desc, escDesc, sizeof(escDesc));
-      char cmd[1400]; snprintf(cmd, sizeof(cmd), "%s add %s %s %s %.2f %s", prog_name, date, type, escCategory, amount, escDesc);
+      
+      char escDate[64], escType[128], escCategory[512], escDesc[2048];
+      shell_escape(date, escDate, sizeof(escDate));
+      shell_escape(type, escType, sizeof(escType));
+      shell_escape(category, escCategory, sizeof(escCategory));
+      shell_escape(desc, escDesc, sizeof(escDesc));
+      
+      char cmd[3000];
+      snprintf(cmd, sizeof(cmd), "%s add %s %s %s %.2f %s", prog_name, escDate, escType, escCategory, amount, escDesc);
       int rc = system(cmd); (void)rc;
     } else if (choice == 3) {
       char cmd[256]; snprintf(cmd, sizeof(cmd), "%s balance", prog_name); int rc = system(cmd); (void)rc;

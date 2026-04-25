@@ -6,11 +6,11 @@
 #include <string.h>
 
 typedef struct {
-  char date[11]; // YYYY-MM-DD
-  char type[8]; // "Income" or "Expense"
-  char category[30];
+  char date[16]; // YYYY-MM-DD + slack
+  char type[16]; // "Income" or "Expense"
+  char category[64];
   double amount;
-  char description[100];
+  char description[256];
 } Transaction;
 
 #endif // DATA_MODEL_H

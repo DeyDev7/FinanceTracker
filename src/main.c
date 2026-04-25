@@ -174,26 +174,23 @@ static int ensure_csv_has_header(void) {
   fclose(fp);
   // naive check; if no header, prepend by rewriting file
   if (strncmp(firstLine, "Date,Type,Category,Amount,Description", 36) != 0) {
-    // read entire file then rewrite with header
+    char tmp_file[160];
+    snprintf(tmp_file, sizeof(tmp_file), "%s/%s", g_db_dir, "data.header_fix.tmp.csv");
     fp = fopen(g_db_file, "r");
     if (!fp) return -1;
-    fseek(fp, 0, SEEK_END);
-    long size = ftell(fp);
-    fseek(fp, 0, SEEK_SET);
-    char *buf = (char *)malloc((size_t)size + 1);
-    if (!buf) {
-      fclose(fp);
+    FILE *out = fopen(tmp_file, "w");
+    if (!out) { fclose(fp); return -1; }
+    fputs(CSV_HEADER, out);
+    char buf[1024];
+    while (fgets(buf, sizeof(buf), fp)) {
+      fputs(buf, out);
+    }
+    fclose(fp);
+    fclose(out);
+    if (rename(tmp_file, g_db_file) != 0) {
+      remove(tmp_file);
       return -1;
     }
-    size_t read = fread(buf, 1, (size_t)size, fp);
-    buf[read] = '\0';
-    fclose(fp);
-    fp = fopen(g_db_file, "w");
-    if (!fp) { free(buf); return -1; }
-    fputs(CSV_HEADER, fp);
-    fputs(buf, fp);
-    fclose(fp);
-    free(buf);
   }
   return 0;
 }
@@ -206,8 +203,12 @@ static int write_transaction(const Transaction *tx) {
     fprintf(stderr, "Error: cannot open %s for appending\n", g_db_file);
     return -1;
   }
-  char escDesc[512]; csv_escape(tx->description, escDesc, sizeof(escDesc));
-  fprintf(fp, "%s,%s,%s,%.2f,%s\n", tx->date, tx->type, tx->category, tx->amount, escDesc);
+  char escDate[32], escType[32], escCategory[128], escDesc[512];
+  csv_escape(tx->date, escDate, sizeof(escDate));
+  csv_escape(tx->type, escType, sizeof(escType));
+  csv_escape(tx->category, escCategory, sizeof(escCategory));
+  csv_escape(tx->description, escDesc, sizeof(escDesc));
+  fprintf(fp, "%s,%s,%s,%.2f,%s\n", escDate, escType, escCategory, tx->amount, escDesc);
   fclose(fp);
   return 0;
 }
@@ -217,7 +218,7 @@ static int list_transactions(void) {
   if (ensure_csv_has_header() != 0) return -1;
   FILE *fp = fopen(g_db_file, "r");
   if (!fp) { fprintf(stderr, "Error: cannot open %s\n", g_db_file); return -1; }
-  char line[512];
+  char line[1024];
   // print header for the list with IDs
   if (fgets(line, sizeof(line), fp)) {
     printf("ID,%s", line); // header already has trailing newline
@@ -236,7 +237,7 @@ static int compute_balance(void) {
   if (ensure_csv_has_header() != 0) return -1;
   FILE *fp = fopen(g_db_file, "r");
   if (!fp) { fprintf(stderr, "Error: cannot open %s\n", g_db_file); return -1; }
-  char line[512];
+  char line[1024];
   // skip header if present
   if (fgets(line, sizeof(line), fp)) {
     if (strncmp(line, "Date,Type,Category,Amount,Description", 36) != 0) {
@@ -352,7 +353,7 @@ static int delete_row_by_id(int targetId) {
   if (!in) { fprintf(stderr, "Error: cannot open %s\n", g_db_file); return -1; }
   FILE *out = fopen(tmp_file, "w");
   if (!out) { fclose(in); fprintf(stderr, "Error: cannot open temp file\n"); return -1; }
-  char line[512];
+  char line[1024];
   // copy header
   if (fgets(line, sizeof(line), in)) fputs(line, out);
   int id = 1; int removed = 0;
@@ -380,7 +381,7 @@ static int delete_month(const char *ym) {
   if (!in) { fprintf(stderr, "Error: cannot open %s\n", g_db_file); return -1; }
   FILE *out = fopen(tmp_file, "w");
   if (!out) { fclose(in); fprintf(stderr, "Error: cannot open temp file\n"); return -1; }
-  char line[512];
+  char line[1024];
   if (fgets(line, sizeof(line), in)) fputs(line, out); // header
   int removed = 0;
   while (fgets(line, sizeof(line), in)) {
@@ -460,9 +461,9 @@ int main(int argc, char *argv[]) {
     if (ensure_csv_has_header() != 0) return 1;
     FILE *fp = fopen(g_db_file, "r");
     if (!fp) { fprintf(stderr, "Error: cannot open %s\n", g_db_file); return 1; }
-    char line[512];
-  // print header
-  if (fgets(line, sizeof(line), fp)) fputs(line, stdout);
+    char line[1024];
+    // print header
+    if (fgets(line, sizeof(line), fp)) fputs(line, stdout);
     while (fgets(line, sizeof(line), fp)) {
       char date[32], type[16], category[64], description[256];
       double amount = 0.0;
@@ -520,17 +521,24 @@ int main(int argc, char *argv[]) {
     int cur = 1; int edited = 0;
     while (fgets(line, sizeof(line), in)) {
       if (cur == id) {
-        char date[32], type[16], category[64], description[256]; double amount = 0.0; description[0] = '\0';
-        int parsed = sscanf(line, "%31[^,],%15[^,],%63[^,],%lf,%255[^\n]", date, type, category, &amount, description);
-        if (parsed >= 4) {
+        char date[32], type[16], category[64], description[256]; double amount = 0.0;
+        if (csv_parse_5(line, date, type, category, &amount, description) == 0) {
           if (opt_date) snprintf(date, sizeof(date), "%s", opt_date);
           if (opt_type[0]) snprintf(type, sizeof(type), "%s", opt_type);
           if (opt_category) snprintf(category, sizeof(category), "%s", opt_category);
           if (opt_amount >= 0.0) amount = opt_amount;
           if (have_desc) { snprintf(description, sizeof(description), "%s", opt_desc); }
+          
+          char escDate[32], escType[32], escCategory[128], escDesc[512];
+          csv_escape(date, escDate, sizeof(escDate));
+          csv_escape(type, escType, sizeof(escType));
+          csv_escape(category, escCategory, sizeof(escCategory));
+          csv_escape(description, escDesc, sizeof(escDesc));
+          fprintf(out, "%s,%s,%s,%.2f,%s\n", escDate, escType, escCategory, amount, escDesc);
+          edited = 1;
+        } else {
+          fputs(line, out); // fallback
         }
-        fprintf(out, "%s,%s,%s,%.2f,%s\n", date, type, category, amount, description);
-        edited = 1;
       } else {
         fputs(line, out);
       }
