@@ -1,38 +1,26 @@
-# Repository Guidelines
+# AGENTS.md
 
-## Project Structure & Module Organization
-- Source code is located in the `src/` directory.
-  - `src/main.c`: Main entry point.
-  - `src/menu.c` and `src/menu.h`: Menu handling.
-  - `src/data_model.h`: Data structures.
-  - `src/core/`: Core financial logic (`finance_core.c`, `finance_core.h`).
-  - `src/utils/`: Utility functions (`csv_utils.c`, `csv_utils.h`).
-- The `db/` directory likely contains database files.
-- Executables `finance` and `finance_tracker` are built in the root.
+Django 6.1 web app (Python 3.12). Single app `transactions`; settings in `config/`.
 
-## Build, Test, and Development Commands
-- Build: Use `gcc` to compile source files. Example:
-  `gcc src/main.c src/menu.c src/core/finance_core.c src/utils/csv_utils.c -o finance`
-- Test: Run `src/test_core.c` (if applicable) or use any existing test framework. Currently, no automated test framework is detected.
-- Clean: Remove generated executables with `rm finance finance_tracker`.
+## Commands
+- Use venv: `source venv/bin/activate` (already present).
+- Run dev server: `python manage.py runserver`
+- Migrate: `python manage.py migrate`
+- Tests: `python manage.py test` (Django TestCase; `transactions/tests.py` currently empty)
+- Single test: `python manage.py test transactions.tests.TestName`
+- Create migration: `python manage.py makemigrations transactions`
 
-## Coding Style & Naming Conventions
-- Indentation: 4 spaces.
-- Naming: 
-  - Functions and variables: snake_case.
-  - Macros: UPPER_SNAKE_CASE.
-  - Header files: .h extension.
-- No automated linting tools are configured; follow the existing code style.
+## Structure
+- `config/` project settings/urls; `transactions/` app (models, views, urls, templates).
+- URLs: `config/urls.py` includes `transactions.urls`; root `/` -> `views.dashboard`.
+- DB: SQLite `db.sqlite3` (gitignored but present locally); do not commit.
 
-## Testing Guidelines
-- Tests are not currently automated. The file `src/test_core.c` may contain test cases.
-- To run tests, compile and execute `test_core.c` similarly to the main program.
-- Aim to add unit tests for new functions using a testing framework (e.g., Unity, CMocka) in the future.
+## Conventions
+- 4 spaces; snake_case functions/vars.
+- Templates under `transactions/templates/transactions/`.
+- `Transaction.type` choices are `'Income'`/`'Expense'` (capitalized) — views filter on these exact strings.
 
-## Commit & Pull Request Guidelines
-- Commit messages: Use imperative mood, e.g., "Add feature X", "Fix bug in Y".
-- Pull requests should include:
-  - A clear description of changes.
-  - Reference to any related issues.
-  - Screenshots if UI changes are made.
-  - Ensure code follows the existing style and passes any tests.
+## Gotchas
+- `transactions/migrations/test_migration.py` is junk (prints hello); not a real migration. Don't run it.
+- Uncommitted WIP: dashboard view, urls wiring, sample-data migration 0002. Continue from current state; do not discard.
+- `SECRET_KEY` is insecure placeholder; DEBUG=True — dev only.
